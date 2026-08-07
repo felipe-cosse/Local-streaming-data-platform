@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+import base64
 import json
+import os
 import re
+import subprocess
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -144,6 +148,63 @@ class RepositoryContractsTest(unittest.TestCase):
         self.assertIn("dockerfile: docker/quality/Dockerfile", compose)
         self.assertIn("http://quality-api:8000/scan", dag)
         self.assertIn("http://rag-api:8000/index", dag)
+
+    def test_airflow_fernet_key_is_generated_and_not_tracked(self) -> None:
+        compose = (ROOT / "compose.yaml").read_text()
+        env_example = (ROOT / ".env.example").read_text()
+        makefile = (ROOT / "Makefile").read_text()
+        initializer = ROOT / "scripts/init-env.sh"
+        tracked_fernet_key = re.compile(
+            r"(?m)^\s*(?:AIRFLOW_FERNET_KEY|AIRFLOW__CORE__FERNET_KEY)"
+            r"[^\n]*[A-Za-z0-9_-]{43}=\s*$"
+        )
+
+        self.assertNotRegex(env_example, tracked_fernet_key)
+        self.assertNotRegex(compose, tracked_fernet_key)
+        self.assertIn("${AIRFLOW_FERNET_KEY:?", compose)
+        self.assertRegex(makefile, r"(?m)^init-env:")
+        self.assertTrue(initializer.is_file())
+        self.assertIn("secrets.token_bytes(32)", initializer.read_text())
+
+        generated_keys = []
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_root = Path(temp_dir)
+            for index in range(2):
+                env_file = temp_root / f"generated-{index}.env"
+                result = subprocess.run(
+                    ["bash", str(initializer)],
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                    env={
+                        **os.environ,
+                        "ENV_FILE": str(env_file),
+                        "ENV_EXAMPLE_FILE": str(ROOT / ".env.example"),
+                    },
+                )
+                self.assertIn("Generated a unique Airflow Fernet key", result.stdout)
+                match = re.search(r"(?m)^AIRFLOW_FERNET_KEY=(.+)$", env_file.read_text())
+                self.assertIsNotNone(match)
+                key = match.group(1)
+                self.assertEqual(len(base64.urlsafe_b64decode(key)), 32)
+                self.assertEqual(env_file.stat().st_mode & 0o777, 0o600)
+                generated_keys.append(key)
+
+                preserved = subprocess.run(
+                    ["bash", str(initializer)],
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                    env={
+                        **os.environ,
+                        "ENV_FILE": str(env_file),
+                        "ENV_EXAMPLE_FILE": str(ROOT / ".env.example"),
+                    },
+                )
+                self.assertIn("already has a valid", preserved.stdout)
+                self.assertIn(f"AIRFLOW_FERNET_KEY={key}", env_file.read_text())
+
+        self.assertNotEqual(generated_keys[0], generated_keys[1])
 
     def test_documented_make_targets_exist(self) -> None:
         makefile = (ROOT / "Makefile").read_text()

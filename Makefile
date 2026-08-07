@@ -1,11 +1,20 @@
 SHELL := /bin/bash
 COMPOSE := docker compose
 
-.PHONY: help config preflight build up up-core up-lakehouse up-orchestration up-quality up-ai up-observability \
+.PHONY: help init-env config preflight build up up-core up-lakehouse up-orchestration up-quality up-ai up-observability \
 	down bootstrap bootstrap-core submit-flink dbt-run quality rag-index ai-models status logs test smoke clean
+
+COMPOSE_TARGETS := config build up up-core up-lakehouse up-orchestration up-quality up-ai up-observability \
+	down bootstrap bootstrap-core submit-flink dbt-run quality rag-index ai-models status logs smoke clean
+
+$(COMPOSE_TARGETS): init-env
 
 help:
 	@sed -n 's/^## //p' Makefile
+
+## init-env               Create .env and generate a unique local Airflow Fernet key.
+init-env:
+	bash scripts/init-env.sh
 
 ## config                 Render and validate the Compose model.
 config:

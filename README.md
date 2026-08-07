@@ -152,13 +152,15 @@ For deeper design rationale, guarantees, and ownership boundaries, see [the arch
 ### Start the streaming lakehouse
 
 ```bash
-cp .env.example .env
+make init-env
 make test
 make preflight
 make up-core
 make up-lakehouse
 make smoke
 ```
+
+`make init-env` copies `.env.example` when needed and generates a unique Airflow Fernet key in the ignored `.env` file. Compose-backed Make targets call it automatically, but keeping it explicit makes the local secret boundary visible.
 
 The startup targets are idempotent:
 
