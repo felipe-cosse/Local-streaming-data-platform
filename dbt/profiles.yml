@@ -1,0 +1,11 @@
+data_platform:
+  target: local
+  outputs:
+    local:
+      type: starrocks
+      host: "{{ env_var('STARROCKS_HOST', 'starrocks') }}"
+      port: "{{ env_var('STARROCKS_PORT', '9030') | int }}"
+      schema: analytics
+      username: "{{ env_var('STARROCKS_USER', 'root') }}"
+      password: "{{ env_var('STARROCKS_PASSWORD', '') }}"
+      threads: 4

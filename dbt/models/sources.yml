@@ -1,0 +1,21 @@
+version: 2
+
+sources:
+  - name: realtime
+    schema: analytics
+    description: Tables maintained continuously by Flink in StarRocks.
+    tables:
+      - name: events_realtime
+        columns:
+          - name: event_id
+            data_tests: [not_null, unique]
+          - name: occurred_at
+            data_tests: [not_null]
+      - name: orders_current
+        columns:
+          - name: id
+            data_tests: [not_null, unique]
+      - name: customers_current
+        columns:
+          - name: id
+            data_tests: [not_null, unique]

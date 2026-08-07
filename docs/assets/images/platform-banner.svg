@@ -1,0 +1,50 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="480" viewBox="0 0 1600 480" role="img" aria-labelledby="title desc">
+  <title id="title">Local streaming lakehouse and AI platform</title>
+  <desc id="desc">A decorative data flow from application events and change data capture through streaming, analytics, storage, and retrieval-augmented AI.</desc>
+  <defs>
+    <linearGradient id="background" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#071829"/>
+      <stop offset="0.55" stop-color="#0b2a45"/>
+      <stop offset="1" stop-color="#123c52"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#37d5ff"/>
+      <stop offset="0.5" stop-color="#53e3a6"/>
+      <stop offset="1" stop-color="#ffd166"/>
+    </linearGradient>
+    <filter id="glow" x="-30%" y="-30%" width="160%" height="160%">
+      <feGaussianBlur stdDeviation="8" result="blur"/>
+      <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>
+
+  <rect width="1600" height="480" rx="32" fill="url(#background)"/>
+  <circle cx="1390" cy="70" r="210" fill="#2e8fb5" opacity="0.12"/>
+  <circle cx="154" cy="430" r="240" fill="#20bf8d" opacity="0.08"/>
+
+  <g font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif">
+    <text x="92" y="130" fill="#8fe8ff" font-size="24" font-weight="700" letter-spacing="5">OPEN-SOURCE · LOCAL-FIRST</text>
+    <text x="92" y="205" fill="#ffffff" font-size="58" font-weight="750">Streaming Lakehouse</text>
+    <text x="92" y="270" fill="#ffffff" font-size="58" font-weight="750">and AI Context Platform</text>
+    <text x="94" y="326" fill="#b9cfdd" font-size="25">CDC, real-time processing, analytical serving, data quality, and RAG—on Docker Compose.</text>
+
+    <g transform="translate(92 380)" font-size="20" font-weight="650">
+      <g><rect width="142" height="48" rx="24" fill="#103f5a" stroke="#2c7897"/><text x="71" y="31" text-anchor="middle" fill="#d7f6ff">Events + CDC</text></g>
+      <g transform="translate(164)"><rect width="132" height="48" rx="24" fill="#103f5a" stroke="#2c7897"/><text x="66" y="31" text-anchor="middle" fill="#d7f6ff">Streaming</text></g>
+      <g transform="translate(318)"><rect width="124" height="48" rx="24" fill="#103f5a" stroke="#2c7897"/><text x="62" y="31" text-anchor="middle" fill="#d7f6ff">Lakehouse</text></g>
+      <g transform="translate(464)"><rect width="142" height="48" rx="24" fill="#103f5a" stroke="#2c7897"/><text x="71" y="31" text-anchor="middle" fill="#d7f6ff">Warehouse</text></g>
+      <g transform="translate(628)"><rect width="142" height="48" rx="24" fill="#103f5a" stroke="#2c7897"/><text x="71" y="31" text-anchor="middle" fill="#d7f6ff">Quality + AI</text></g>
+    </g>
+
+    <g transform="translate(1000 112)">
+      <path d="M0 126 C90 26 180 226 270 126 C360 26 450 226 520 126" fill="none" stroke="url(#accent)" stroke-width="7" stroke-linecap="round" opacity="0.86" filter="url(#glow)"/>
+      <path d="M0 202 C90 102 180 302 270 202 C360 102 450 302 520 202" fill="none" stroke="#4ea8de" stroke-width="3" stroke-linecap="round" opacity="0.34"/>
+      <g fill="#ffffff" stroke="#5fe0bf" stroke-width="5">
+        <circle cx="0" cy="126" r="14"/><circle cx="130" cy="126" r="14"/><circle cx="270" cy="126" r="14"/><circle cx="404" cy="126" r="14"/><circle cx="520" cy="126" r="14"/>
+      </g>
+      <g fill="#b9cfdd" font-size="17" font-weight="650" text-anchor="middle">
+        <text x="0" y="92">SOURCE</text><text x="130" y="92">STREAM</text><text x="270" y="92">PROCESS</text><text x="404" y="92">SERVE</text><text x="520" y="92">CONTEXT</text>
+      </g>
+    </g>
+  </g>
+</svg>

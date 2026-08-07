@@ -1,0 +1,34 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: prometheus
+    static_configs:
+      - targets: [prometheus:9090]
+
+  - job_name: kafka
+    static_configs:
+      - targets: [kafka-exporter:9308]
+
+  - job_name: starrocks-fe
+    metrics_path: /metrics
+    static_configs:
+      - targets: [starrocks:8030]
+
+  - job_name: seaweedfs
+    metrics_path: /metrics
+    static_configs:
+      - targets: [seaweedfs:9327]
+
+  - job_name: flink-jobmanager
+    static_configs:
+      - targets: [flink-jobmanager:9249]
+
+  - job_name: flink-taskmanager
+    static_configs:
+      - targets: [flink-taskmanager:9249]
+
+  - job_name: weaviate
+    static_configs:
+      - targets: [weaviate:2112]

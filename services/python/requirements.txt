@@ -1,0 +1,7 @@
+confluent-kafka==2.11.1
+Faker==37.5.3
+jsonschema==4.25.0
+mysql-connector-python==9.4.0
+psycopg[binary]==3.2.9
+PyMySQL==1.1.2
+requests==2.32.4

@@ -1,0 +1,5 @@
+dbt-core==1.12.0
+dbt-starrocks==1.12.0
+pymysql==1.1.2
+mysql-connector-python==9.4.0
+psycopg[binary]==3.2.9

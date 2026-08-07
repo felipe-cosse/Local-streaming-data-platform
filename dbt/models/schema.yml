@@ -1,0 +1,31 @@
+version: 2
+
+models:
+  - name: stg_events
+    description: Valid application events exposed with producer latency.
+    columns:
+      - name: event_id
+        data_tests: [not_null, unique]
+      - name: producer
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [python-generator, php-generator]
+      - name: producer_latency_ms
+        data_tests: [not_null]
+
+  - name: fct_event_hourly
+    description: Hourly event volume and latency by producer and event type.
+    columns:
+      - name: event_hour
+        data_tests: [not_null]
+      - name: event_count
+        data_tests: [not_null]
+
+  - name: dim_customer_orders
+    description: Current customer state enriched with current order aggregates.
+    columns:
+      - name: customer_id
+        data_tests: [not_null, unique]
+      - name: email
+        data_tests: [not_null, unique]

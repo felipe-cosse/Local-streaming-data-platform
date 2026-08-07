@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local.data-platform/contracts/event-v1.schema.json",
+  "title": "Platform Event v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "event_id",
+    "event_type",
+    "event_version",
+    "producer",
+    "occurred_at",
+    "ingested_at",
+    "correlation_id",
+    "partition_key",
+    "payload"
+  ],
+  "properties": {
+    "event_id": {"type": "string", "format": "uuid"},
+    "event_type": {"type": "string", "minLength": 1, "maxLength": 100},
+    "event_version": {"const": 1},
+    "producer": {"enum": ["python-generator", "php-generator"]},
+    "occurred_at": {"type": "string", "format": "date-time"},
+    "ingested_at": {"type": "string", "format": "date-time"},
+    "correlation_id": {"type": "string", "format": "uuid"},
+    "partition_key": {"type": "string", "minLength": 1, "maxLength": 100},
+    "payload": {
+      "type": "object",
+      "additionalProperties": {"type": "string"}
+    }
+  }
+}

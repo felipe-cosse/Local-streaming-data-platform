@@ -1,0 +1,7 @@
+data_source starrocks:
+  type: mysql
+  host: ${STARROCKS_HOST}
+  port: ${STARROCKS_PORT}
+  username: ${STARROCKS_READER_USER}
+  password: ${STARROCKS_READER_PASSWORD}
+  database: analytics

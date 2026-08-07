@@ -1,0 +1,721 @@
+name: ${COMPOSE_PROJECT_NAME:-data-platform-streams}
+
+x-python-build: &python-build
+  context: .
+  dockerfile: docker/python/Dockerfile
+
+x-airflow-common: &airflow-common
+  build:
+    context: .
+    dockerfile: docker/airflow/Dockerfile
+  profiles: [orchestration]
+  user: "${AIRFLOW_UID:-50000}:0"
+  environment: &airflow-environment
+    AIRFLOW__CORE__EXECUTOR: LocalExecutor
+    AIRFLOW__CORE__AUTH_MANAGER: airflow.providers.fab.auth_manager.fab_auth_manager.FabAuthManager
+    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg://airflow:${AIRFLOW_DB_PASSWORD:-local_airflow_db_password}@airflow-db:5432/airflow
+    AIRFLOW__CORE__FERNET_KEY: ${AIRFLOW_FERNET_KEY:-9qR1M0WG8H8o3YpXP2qgHZYzWr91RAjtQWnE8ZB2xTg=}
+    AIRFLOW__API_AUTH__JWT_SECRET: ${AIRFLOW_JWT_SECRET:-local-only-change-me}
+    AIRFLOW__CORE__EXECUTION_API_SERVER_URL: http://airflow-api-server:8080/execution/
+    AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "false"
+    AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+    AIRFLOW__SCHEDULER__ENABLE_HEALTH_CHECK: "true"
+    AIRFLOW__DAG_PROCESSOR__PARSING_PROCESSES: "1"
+    AIRFLOW__API__DAG_CACHE_SIZE: "32"
+    DBT_PROFILES_DIR: /opt/platform/dbt
+    STARROCKS_HOST: starrocks
+    STARROCKS_PORT: "9030"
+    STARROCKS_USER: ${STARROCKS_USER:-root}
+    STARROCKS_PASSWORD: ${STARROCKS_PASSWORD:-}
+    STARROCKS_READER_USER: ${STARROCKS_READER_USER:-analytics_reader}
+    STARROCKS_READER_PASSWORD: ${STARROCKS_READER_PASSWORD:-local_analytics_reader}
+  volumes:
+    - ./airflow/dags:/opt/airflow/dags:ro
+    - airflow-logs:/opt/airflow/logs
+    - ./dbt:/opt/platform/dbt
+    - ./services/python:/opt/platform/services/python:ro
+  networks: [platform]
+
+services:
+  kafka-volume-init:
+    image: apache/kafka:4.1.2
+    profiles: [core]
+    user: "0:0"
+    entrypoint: [/bin/sh, -c]
+    command: ["chown -R 1000:1000 /var/lib/kafka-data"]
+    volumes:
+      - kafka-data:/var/lib/kafka-data
+    restart: "no"
+    networks: [platform]
+
+  mysql:
+    image: mysql:8.4.6
+    profiles: [core]
+    command:
+      - --server-id=223344
+      - --log-bin=mysql-bin
+      - --binlog-format=ROW
+      - --binlog-row-image=FULL
+      - --binlog-expire-logs-seconds=604800
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-local_mysql_root}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-inventory}
+      MYSQL_USER: ${MYSQL_APP_USER:-app_user}
+      MYSQL_PASSWORD: ${MYSQL_APP_PASSWORD:-local_app_password}
+      MYSQL_DEBEZIUM_USER: ${MYSQL_DEBEZIUM_USER:-debezium}
+      MYSQL_DEBEZIUM_PASSWORD: ${MYSQL_DEBEZIUM_PASSWORD:-local_debezium_password}
+    ports: ["3306:3306"]
+    volumes:
+      - mysql-data:/var/lib/mysql
+      - ./sql/mysql:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: [CMD-SHELL, "mysqladmin ping -h 127.0.0.1 -uroot -p$${MYSQL_ROOT_PASSWORD} --silent"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 20s
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits: {memory: 768M}
+    networks: [platform]
+
+  postgres-source:
+    image: postgres:17.6-alpine
+    profiles: [core]
+    command: [postgres, -c, wal_level=logical, -c, max_wal_senders=4, -c, max_replication_slots=4]
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-local_postgres_password}
+      POSTGRES_DB: ${POSTGRES_DB:-appdb}
+      POSTGRES_APP_USER: ${POSTGRES_APP_USER:-app_user}
+      POSTGRES_APP_PASSWORD: ${POSTGRES_APP_PASSWORD:-local_app_password}
+      POSTGRES_DEBEZIUM_USER: ${POSTGRES_DEBEZIUM_USER:-debezium}
+      POSTGRES_DEBEZIUM_PASSWORD: ${POSTGRES_DEBEZIUM_PASSWORD:-local_debezium_password}
+    ports: ["5432:5432"]
+    volumes:
+      - postgres-source-data:/var/lib/postgresql/data
+      - ./sql/postgres:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: [CMD-SHELL, "pg_isready -U postgres -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits: {memory: 512M}
+    networks: [platform]
+
+  kafka:
+    image: apache/kafka:4.1.2
+    profiles: [core]
+    environment:
+      CLUSTER_ID: MkU3OEVBNTcwNTJENDM2Qk
+      KAFKA_NODE_ID: "1"
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: CONTROLLER://:29093,PLAINTEXT://:29092,PLAINTEXT_HOST://:9092
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:29093
+      KAFKA_LOG_DIRS: /tmp/kraft-combined-logs
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: "1"
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: "1"
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: "1"
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: "0"
+      KAFKA_NUM_PARTITIONS: "3"
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
+      KAFKA_LOG_RETENTION_HOURS: "24"
+    ports: ["9092:9092"]
+    volumes:
+      - kafka-data:/tmp/kraft-combined-logs
+    depends_on:
+      kafka-volume-init: {condition: service_completed_successfully}
+    healthcheck:
+      test: [CMD-SHELL, "/opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:29092 --list >/dev/null 2>&1"]
+      interval: 10s
+      timeout: 10s
+      retries: 20
+      start_period: 20s
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits: {memory: 1G}
+    networks: [platform]
+
+  connect:
+    image: quay.io/debezium/connect:3.4.3.Final
+    profiles: [core]
+    environment:
+      BOOTSTRAP_SERVERS: kafka:29092
+      KAFKA_HEAP_OPTS: -Xms256M -Xmx768M
+      GROUP_ID: platform-connect
+      CONFIG_STORAGE_TOPIC: connect-configs
+      OFFSET_STORAGE_TOPIC: connect-offsets
+      STATUS_STORAGE_TOPIC: connect-status
+      CONFIG_STORAGE_REPLICATION_FACTOR: "1"
+      OFFSET_STORAGE_REPLICATION_FACTOR: "1"
+      STATUS_STORAGE_REPLICATION_FACTOR: "1"
+    ports: ["8083:8083"]
+    depends_on:
+      kafka: {condition: service_healthy}
+      mysql: {condition: service_healthy}
+      postgres-source: {condition: service_healthy}
+    healthcheck:
+      test: [CMD-SHELL, "curl -fsS http://localhost:8083/connectors >/dev/null"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 30s
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits: {memory: 1G}
+    networks: [platform]
+
+  starrocks:
+    image: starrocks/allin1-ubuntu:4.0.13
+    profiles: [core]
+    ports:
+      - "8030:8030"
+      - "8040:8040"
+      - "9030:9030"
+    volumes:
+      - starrocks-fe-meta:/data/deploy/starrocks/fe/meta
+      - starrocks-be-storage:/data/deploy/starrocks/be/storage
+    healthcheck:
+      test: [CMD-SHELL, "mysql -h127.0.0.1 -P9030 -uroot -e 'SELECT 1' >/dev/null 2>&1"]
+      interval: 15s
+      timeout: 10s
+      retries: 40
+      start_period: 60s
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits: {memory: 4G}
+    networks: [platform]
+
+  python-producer:
+    build: *python-build
+    profiles: [core]
+    command: [python, -u, /app/event_producer.py]
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      KAFKA_TOPIC: app.python.events.v1
+      PRODUCER_NAME: python-generator
+      RANDOM_SEED: ${RANDOM_SEED:-42}
+      EVENTS_PER_SECOND: ${EVENTS_PER_SECOND:-2}
+    volumes: ["./services/python:/app:ro", "./contracts:/contracts:ro"]
+    depends_on:
+      kafka: {condition: service_healthy}
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits: {memory: 256M}
+    networks: [platform]
+
+  php-producer:
+    build:
+      context: .
+      dockerfile: docker/php/Dockerfile
+    profiles: [core]
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      KAFKA_TOPIC: app.php.events.v1
+      PRODUCER_NAME: php-generator
+      RANDOM_SEED: ${RANDOM_SEED:-42}
+      EVENTS_PER_SECOND: ${EVENTS_PER_SECOND:-2}
+    depends_on:
+      kafka: {condition: service_healthy}
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits: {memory: 256M}
+    networks: [platform]
+
+  db-seeder:
+    build: *python-build
+    profiles: [core]
+    command: [python, -u, /app/db_seeder.py]
+    environment:
+      MYSQL_HOST: mysql
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-inventory}
+      MYSQL_USER: ${MYSQL_APP_USER:-app_user}
+      MYSQL_PASSWORD: ${MYSQL_APP_PASSWORD:-local_app_password}
+      POSTGRES_HOST: postgres-source
+      POSTGRES_DATABASE: ${POSTGRES_DB:-appdb}
+      POSTGRES_USER: ${POSTGRES_APP_USER:-app_user}
+      POSTGRES_PASSWORD: ${POSTGRES_APP_PASSWORD:-local_app_password}
+      RANDOM_SEED: ${RANDOM_SEED:-42}
+      DB_MUTATIONS_PER_SECOND: ${DB_MUTATIONS_PER_SECOND:-1}
+    volumes: ["./services/python:/app:ro"]
+    depends_on:
+      mysql: {condition: service_healthy}
+      postgres-source: {condition: service_healthy}
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits: {memory: 256M}
+    networks: [platform]
+
+  seaweedfs:
+    image: chrislusf/seaweedfs:4.26
+    profiles: [lakehouse, ai]
+    command:
+      - mini
+      - -dir=/data
+      - -ip=seaweedfs
+      - -ip.bind=0.0.0.0
+      - -webdav=false
+      - -admin.ui=true
+      - -metricsPort=9327
+      - -s3.port=8333
+      - -s3.port.iceberg=8181
+      - -s3.externalUrl=http://seaweedfs:8333
+      - -bucket=flink-checkpoints,flink-savepoints,platform-artifacts,weaviate-backups,quarantine
+      - -tableBucket=iceberg-warehouse
+    environment:
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-seaweedfs}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-local_seaweedfs_secret}
+      S3_EXTERNAL_URL: http://seaweedfs:8333
+      S3TABLES_DEFAULT_BUCKET: iceberg-warehouse
+      ICEBERG_WAREHOUSE: ${ICEBERG_DATA_WAREHOUSE:-s3://platform-artifacts/iceberg}
+    ports:
+      - "8333:8333"
+      - "8181:8181"
+      - "9333:9333"
+      - "8888:8888"
+      - "23646:23646"
+    volumes: ["seaweedfs-data:/data"]
+    healthcheck:
+      test: [CMD-SHELL, "wget -qO- 'http://localhost:8181/v1/config?warehouse=s3://iceberg-warehouse/' >/dev/null"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 30s
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits: {memory: 768M}
+    networks: [platform]
+
+  flink-jobmanager:
+    build:
+      context: .
+      dockerfile: docker/flink/Dockerfile
+    profiles: [lakehouse]
+    command: jobmanager
+    environment:
+      AWS_REGION: ${AWS_REGION:-us-east-1}
+      AWS_DEFAULT_REGION: ${AWS_REGION:-us-east-1}
+      FLINK_PROPERTIES: |
+        jobmanager.rpc.address: flink-jobmanager
+        parallelism.default: 2
+        state.backend.type: rocksdb
+        execution.checkpointing.interval: 30s
+        execution.checkpointing.mode: EXACTLY_ONCE
+        execution.checkpointing.externalized-checkpoint-retention: RETAIN_ON_CANCELLATION
+        execution.checkpointing.dir: s3://flink-checkpoints/checkpoints
+        execution.checkpointing.savepoint-dir: s3://flink-savepoints/savepoints
+        s3.endpoint: http://seaweedfs:8333
+        s3.path.style.access: true
+        s3.access-key: ${AWS_ACCESS_KEY_ID:-seaweedfs}
+        s3.secret-key: ${AWS_SECRET_ACCESS_KEY:-local_seaweedfs_secret}
+        metrics.reporter.prom.factory.class: org.apache.flink.metrics.prometheus.PrometheusReporterFactory
+        metrics.reporter.prom.port: 9249
+        rest.flamegraph.enabled: true
+    ports: ["8081:8081"]
+    depends_on:
+      seaweedfs: {condition: service_healthy}
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits: {memory: 1536M}
+    networks: [platform]
+
+  flink-taskmanager:
+    build:
+      context: .
+      dockerfile: docker/flink/Dockerfile
+    profiles: [lakehouse]
+    command: taskmanager
+    environment:
+      AWS_REGION: ${AWS_REGION:-us-east-1}
+      AWS_DEFAULT_REGION: ${AWS_REGION:-us-east-1}
+      FLINK_PROPERTIES: |
+        jobmanager.rpc.address: flink-jobmanager
+        taskmanager.numberOfTaskSlots: 4
+        taskmanager.memory.process.size: 2048m
+        state.backend.type: rocksdb
+        s3.endpoint: http://seaweedfs:8333
+        s3.path.style.access: true
+        s3.access-key: ${AWS_ACCESS_KEY_ID:-seaweedfs}
+        s3.secret-key: ${AWS_SECRET_ACCESS_KEY:-local_seaweedfs_secret}
+        metrics.reporter.prom.factory.class: org.apache.flink.metrics.prometheus.PrometheusReporterFactory
+        metrics.reporter.prom.port: 9249
+    depends_on: [flink-jobmanager]
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits: {memory: 2304M}
+    networks: [platform]
+
+  flink-submit:
+    build:
+      context: .
+      dockerfile: docker/flink/Dockerfile
+    profiles: [lakehouse-tools]
+    command: [/bin/bash, /opt/platform/scripts/submit-flink.sh]
+    environment:
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-seaweedfs}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-local_seaweedfs_secret}
+      AWS_REGION: ${AWS_REGION:-us-east-1}
+      AWS_DEFAULT_REGION: ${AWS_REGION:-us-east-1}
+      FLINK_PROPERTIES: |
+        jobmanager.rpc.address: flink-jobmanager
+        rest.address: flink-jobmanager
+        parallelism.default: 1
+        state.backend.type: rocksdb
+        execution.checkpointing.interval: 30s
+        execution.checkpointing.mode: EXACTLY_ONCE
+        execution.checkpointing.externalized-checkpoint-retention: RETAIN_ON_CANCELLATION
+        execution.checkpointing.dir: s3://flink-checkpoints/checkpoints
+        execution.checkpointing.savepoint-dir: s3://flink-savepoints/savepoints
+        s3.endpoint: http://seaweedfs:8333
+        s3.path.style.access: true
+        s3.access-key: ${AWS_ACCESS_KEY_ID:-seaweedfs}
+        s3.secret-key: ${AWS_SECRET_ACCESS_KEY:-local_seaweedfs_secret}
+    volumes:
+      - ./flink/sql:/opt/platform/sql:ro
+      - ./scripts:/opt/platform/scripts:ro
+    depends_on:
+      flink-jobmanager: {condition: service_started}
+      seaweedfs: {condition: service_healthy}
+    networks: [platform]
+
+  bootstrap:
+    build: *python-build
+    profiles: [tools]
+    command: [python, -u, /app/bootstrap.py]
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      CONNECT_URL: http://connect:8083
+      STARROCKS_HOST: starrocks
+      STARROCKS_PORT: "9030"
+      STARROCKS_USER: ${STARROCKS_USER:-root}
+      STARROCKS_PASSWORD: ${STARROCKS_PASSWORD:-}
+      STARROCKS_READER_USER: ${STARROCKS_READER_USER:-analytics_reader}
+      STARROCKS_READER_PASSWORD: ${STARROCKS_READER_PASSWORD:-local_analytics_reader}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-inventory}
+      MYSQL_DEBEZIUM_USER: ${MYSQL_DEBEZIUM_USER:-debezium}
+      MYSQL_DEBEZIUM_PASSWORD: ${MYSQL_DEBEZIUM_PASSWORD:-local_debezium_password}
+      POSTGRES_DB: ${POSTGRES_DB:-appdb}
+      POSTGRES_DEBEZIUM_USER: ${POSTGRES_DEBEZIUM_USER:-debezium}
+      POSTGRES_DEBEZIUM_PASSWORD: ${POSTGRES_DEBEZIUM_PASSWORD:-local_debezium_password}
+      ICEBERG_CATALOG_URL: http://seaweedfs:8181
+      ICEBERG_WAREHOUSE: s3://iceberg-warehouse/
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-seaweedfs}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-local_seaweedfs_secret}
+    volumes:
+      - ./services/python:/app:ro
+      - ./config/debezium:/config/debezium:ro
+      - ./sql/starrocks:/sql/starrocks:ro
+    networks: [platform]
+
+  smoke:
+    build: *python-build
+    profiles: [tools]
+    command: [python, -u, /app/smoke_test.py]
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      CONNECT_URL: http://connect:8083
+      STARROCKS_HOST: starrocks
+      STARROCKS_PORT: "9030"
+      ICEBERG_CATALOG_URL: http://seaweedfs:8181
+      ICEBERG_WAREHOUSE: s3://iceberg-warehouse/
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-seaweedfs}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-local_seaweedfs_secret}
+      FLINK_URL: http://flink-jobmanager:8081
+      WEAVIATE_URL: http://weaviate:8080
+      AIRFLOW_URL: http://airflow-api-server:8080
+      PROMETHEUS_URL: http://prometheus:9090
+    volumes: ["./services/python:/app:ro"]
+    networks: [platform]
+
+  airflow-db:
+    image: postgres:17.6-alpine
+    profiles: [orchestration]
+    environment:
+      POSTGRES_USER: airflow
+      POSTGRES_PASSWORD: ${AIRFLOW_DB_PASSWORD:-local_airflow_db_password}
+      POSTGRES_DB: airflow
+    volumes: ["airflow-db-data:/var/lib/postgresql/data"]
+    healthcheck:
+      test: [CMD-SHELL, "pg_isready -U airflow -d airflow"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits: {memory: 384M}
+    networks: [platform]
+
+  airflow-init:
+    <<: *airflow-common
+    command: version
+    user: "0:0"
+    environment:
+      <<: *airflow-environment
+      _AIRFLOW_DB_MIGRATE: "true"
+      _AIRFLOW_WWW_USER_CREATE: "true"
+      _AIRFLOW_WWW_USER_USERNAME: ${AIRFLOW_ADMIN_USER:-airflow}
+      _AIRFLOW_WWW_USER_PASSWORD: ${AIRFLOW_ADMIN_PASSWORD:-airflow}
+    depends_on:
+      airflow-db: {condition: service_healthy}
+
+  airflow-api-server:
+    <<: *airflow-common
+    command: api-server
+    ports: ["8080:8080"]
+    healthcheck:
+      test: [CMD, curl, --fail, http://localhost:8080/api/v2/monitor/health]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    depends_on:
+      airflow-init: {condition: service_completed_successfully}
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits: {memory: 768M}
+
+  airflow-scheduler:
+    <<: *airflow-common
+    command: scheduler
+    healthcheck:
+      test: [CMD-SHELL, "airflow jobs check --job-type SchedulerJob --hostname '$${HOSTNAME}'"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    depends_on:
+      airflow-init: {condition: service_completed_successfully}
+      airflow-api-server: {condition: service_healthy}
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits: {memory: 1G}
+
+  airflow-dag-processor:
+    <<: *airflow-common
+    command: dag-processor
+    healthcheck:
+      test: [CMD-SHELL, "airflow jobs check --job-type DagProcessorJob --hostname '$${HOSTNAME}'"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    depends_on:
+      airflow-init: {condition: service_completed_successfully}
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits: {memory: 512M}
+
+  airflow-cli:
+    <<: *airflow-common
+    profiles: [orchestration]
+    entrypoint: []
+    command: [bash]
+    depends_on:
+      airflow-init: {condition: service_completed_successfully}
+
+  quality:
+    build:
+      context: .
+      dockerfile: docker/quality/Dockerfile
+    profiles: [quality]
+    user: "50000:0"
+    command: [soda, scan, -d, starrocks, -c, /opt/platform/quality/configuration.yml, /opt/platform/quality/checks.yml]
+    environment:
+      STARROCKS_HOST: starrocks
+      STARROCKS_PORT: "9030"
+      STARROCKS_READER_USER: ${STARROCKS_READER_USER:-analytics_reader}
+      STARROCKS_READER_PASSWORD: ${STARROCKS_READER_PASSWORD:-local_analytics_reader}
+    volumes: ["./quality:/opt/platform/quality:ro"]
+    networks: [platform]
+
+  quality-api:
+    build:
+      context: .
+      dockerfile: docker/quality/Dockerfile
+    profiles: [orchestration, quality]
+    command: [uvicorn, service:app, --host, 0.0.0.0, --port, "8000"]
+    environment:
+      STARROCKS_HOST: starrocks
+      STARROCKS_PORT: "9030"
+      STARROCKS_READER_USER: ${STARROCKS_READER_USER:-analytics_reader}
+      STARROCKS_READER_PASSWORD: ${STARROCKS_READER_PASSWORD:-local_analytics_reader}
+    volumes: ["./quality:/opt/platform/quality:ro"]
+    healthcheck:
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=3)"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits: {memory: 384M}
+    networks: [platform]
+
+  weaviate:
+    image: cr.weaviate.io/semitechnologies/weaviate:1.38.3
+    profiles: [ai]
+    command: [--host, 0.0.0.0, --port, "8080", --scheme, http]
+    environment:
+      QUERY_DEFAULTS_LIMIT: "10"
+      AUTHENTICATION_ANONYMOUS_ACCESS_ENABLED: "true"
+      PERSISTENCE_DATA_PATH: /var/lib/weaviate
+      CLUSTER_HOSTNAME: node1
+      ENABLE_MODULES: text2vec-ollama,generative-ollama,backup-s3
+      OLLAMA_API_ENDPOINT: http://ollama:11434
+      PROMETHEUS_MONITORING_ENABLED: "true"
+      BACKUP_S3_BUCKET: weaviate-backups
+      BACKUP_S3_ENDPOINT: seaweedfs:8333
+      BACKUP_S3_USE_SSL: "false"
+      BACKUP_S3_PATH_STYLE: "true"
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-seaweedfs}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-local_seaweedfs_secret}
+      AWS_REGION: ${AWS_REGION:-us-east-1}
+    ports:
+      - "8088:8080"
+      - "50051:50051"
+    volumes: ["weaviate-data:/var/lib/weaviate"]
+    depends_on:
+      ollama: {condition: service_started}
+      seaweedfs: {condition: service_healthy}
+    healthcheck:
+      test: [CMD, wget, --spider, -q, http://localhost:8080/v1/.well-known/ready]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits: {memory: 1536M}
+    networks: [platform]
+
+  ollama:
+    image: ollama/ollama:0.12.9
+    profiles: [ai]
+    ports: ["11434:11434"]
+    volumes: ["ollama-data:/root/.ollama"]
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits: {memory: 4G}
+    networks: [platform]
+
+  rag-api:
+    build:
+      context: .
+      dockerfile: docker/rag/Dockerfile
+    profiles: [ai]
+    command: [uvicorn, rag_api:app, --host, 0.0.0.0, --port, "8000"]
+    environment:
+      WEAVIATE_HOST: weaviate
+      WEAVIATE_HTTP_PORT: "8080"
+      WEAVIATE_GRPC_PORT: "50051"
+      OLLAMA_URL: http://ollama:11434
+      OLLAMA_EMBED_MODEL: ${OLLAMA_EMBED_MODEL:-nomic-embed-text}
+      OLLAMA_CHAT_MODEL: ${OLLAMA_CHAT_MODEL:-qwen3:1.7b}
+      STARROCKS_HOST: starrocks
+      STARROCKS_PORT: "9030"
+      STARROCKS_READER_USER: ${STARROCKS_READER_USER:-analytics_reader}
+      STARROCKS_READER_PASSWORD: ${STARROCKS_READER_PASSWORD:-local_analytics_reader}
+    ports: ["8000:8000"]
+    volumes:
+      - ./services/rag:/app:ro
+      - ./:/workspace:ro
+    depends_on:
+      weaviate: {condition: service_healthy}
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits: {memory: 512M}
+    networks: [platform]
+
+  rag-index:
+    build:
+      context: .
+      dockerfile: docker/rag/Dockerfile
+    profiles: [ai]
+    command: [python, -u, /app/indexer.py]
+    environment:
+      WEAVIATE_HOST: weaviate
+      WEAVIATE_HTTP_PORT: "8080"
+      WEAVIATE_GRPC_PORT: "50051"
+      OLLAMA_EMBED_MODEL: ${OLLAMA_EMBED_MODEL:-nomic-embed-text}
+      WORKSPACE_ROOT: /workspace
+    volumes:
+      - ./services/rag:/app:ro
+      - ./:/workspace:ro
+    depends_on:
+      weaviate: {condition: service_healthy}
+    networks: [platform]
+
+  kafka-exporter:
+    image: danielqsj/kafka-exporter:v1.9.0
+    profiles: [observability]
+    command: [--kafka.server=kafka:29092]
+    restart: unless-stopped
+    networks: [platform]
+
+  prometheus:
+    image: prom/prometheus:v3.5.0
+    profiles: [observability]
+    command: [--config.file=/etc/prometheus/prometheus.yml, --storage.tsdb.path=/prometheus, --web.enable-lifecycle]
+    ports: ["9090:9090"]
+    volumes:
+      - ./observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    restart: unless-stopped
+    networks: [platform]
+
+  grafana:
+    image: grafana/grafana:12.1.1
+    profiles: [observability]
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    ports: ["3000:3000"]
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    depends_on: [prometheus]
+    restart: unless-stopped
+    networks: [platform]
+
+networks:
+  platform:
+    name: data-platform-streams
+
+volumes:
+  mysql-data:
+  postgres-source-data:
+  kafka-data:
+  starrocks-fe-meta:
+  starrocks-be-storage:
+  seaweedfs-data:
+  airflow-db-data:
+  airflow-logs:
+  weaviate-data:
+  ollama-data:
+  prometheus-data:
+  grafana-data:

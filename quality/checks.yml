@@ -1,0 +1,25 @@
+checks for events_realtime:
+  - row_count > 0
+  - missing_count(event_id) = 0
+  - duplicate_count(event_id) = 0
+  - missing_count(occurred_at) = 0
+  - freshness(occurred_at) < 15m
+  - invalid_count(producer) = 0:
+      valid values: [python-generator, php-generator]
+
+checks for orders_current:
+  - row_count > 0
+  - missing_count(id) = 0
+  - duplicate_count(id) = 0
+  - invalid_count(amount) = 0:
+      valid min: 0
+  - invalid_count(status) = 0:
+      valid values: [created, paid, shipped, cancelled]
+
+checks for customers_current:
+  - row_count > 0
+  - missing_count(id) = 0
+  - duplicate_count(id) = 0
+  - duplicate_count(email) = 0
+  - invalid_count(status) = 0:
+      valid values: [active, trial, inactive, suspended]
